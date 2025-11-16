@@ -88,7 +88,11 @@ jobs:
           echo "CONFIG set to: $CONFIG"
 
       - name: 安装 依赖
-        run: sudo apt update && sudo apt upgrade -y && sudo apt install -y ccache python3 git curl build-essential libssl-dev bison flex libelf-dev dwarves
+        run: |
+          sudo apt update && sudo apt upgrade -y
+          sudo apt install -y ccache python3 git curl build-essential libssl-dev bison flex libelf-dev dwarves
+          # 安装交叉编译工具链
+          sudo apt install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
       - name: 配置 ccache
         run: |
@@ -102,13 +106,6 @@ jobs:
         run: |
           git config --global user.name "zzh20188"
           git config --global user.email "BuildGkiKernel@gmail.com"
-      
-      - name: 安装仓库
-        run: |
-          mkdir -p ./git-repo
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
-          chmod a+rx ./git-repo/repo
-          echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
 
       - name: 克隆 AnyKernel3
         run: |
@@ -122,29 +119,24 @@ jobs:
           mkdir -p toolchain
           cd toolchain
           
-          # 尝试多个可能的工具链源
-          echo "尝试下载 Clang 工具链..."
-          
-          # 方法1: 从 Google 官方源下载
-          if curl -LSs "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r563880.tar.gz" -o clang.tar.gz && \
-             tar -xzf clang.tar.gz; then
-            echo "成功从 Google 官方源下载工具链"
-          # 方法2: 从 GitHub 备用源下载
-          elif curl -LSs "https://github.com/llvm/llvm-project/releases/download/llvmorg-16.0.0/clang+llvm-16.0.0-x86_64-linux-gnu-ubuntu-18.04.tar.xz" -o clang.tar.xz && \
-               tar -xf clang.tar.xz; then
-            echo "成功从 LLVM 官方源下载工具链"
-            mv clang+llvm-16.0.0-x86_64-linux-gnu-ubuntu-18.04 clang-r563880
-          # 方法3: 使用系统自带的 clang
+          # 下载 AOSP Clang
+          echo "下载 AOSP Clang 工具链..."
+          if curl -LSs "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747.tar.gz" -o clang.tar.gz; then
+            mkdir -p aosp-clang
+            tar -xzf clang.tar.gz -C aosp-clang
+            echo "成功下载 AOSP Clang"
           else
-            echo "使用系统自带的 clang"
-            mkdir -p clang-r563880/bin
-            ln -sf $(which clang) clang-r563880/bin/clang
-            ln -sf $(which clang++) clang-r563880/bin/clang++
+            echo "AOSP Clang 下载失败，使用系统 Clang"
+            mkdir -p aosp-clang/bin
+            ln -sf $(which clang) aosp-clang/bin/clang
+            ln -sf $(which clang++) aosp-clang/bin/clang++
           fi
           
           # 设置工具链路径
-          export CLANG_PATH="$GITHUB_WORKSPACE/toolchain/clang-r563880/bin"
+          export CLANG_PATH="$GITHUB_WORKSPACE/toolchain/aosp-clang/bin"
+          export CROSS_COMPILE="aarch64-linux-gnu-"
           echo "CLANG_PATH=$CLANG_PATH" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=$CROSS_COMPILE" >> $GITHUB_ENV
           echo "PATH=$CLANG_PATH:$PATH" >> $GITHUB_ENV
 
       - name: 克隆内核源代码
@@ -155,12 +147,6 @@ jobs:
           
           echo "Cloning kernel source from GitHub..."
           git clone https://github.com/Pzqqt/android_kernel_xiaomi_marble.git --depth=1 common
-          
-          cd common
-          # 更新构建配置使用我们下载的 clang
-          if [ -f "build.config.common" ]; then
-            sed -i "s|^CLANG_PREBUILT_BIN=.*|CLANG_PREBUILT_BIN=$CLANG_PATH|" build.config.common
-          fi
 
       - name: 验证工具链
         run: |
@@ -169,6 +155,8 @@ jobs:
           ls -la $CLANG_PATH || echo "Clang 目录不存在"
           which clang
           clang --version || echo "Clang 不可用"
+          echo "CROSS_COMPILE: $CROSS_COMPILE"
+          which ${CROSS_COMPILE}gcc || echo "交叉编译器不可用"
 
       - name: 获取 KSU & SUSFS 版本
         run: |
@@ -266,6 +254,30 @@ jobs:
             curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash $BRANCH
           fi
           
+      - name: 手动配置内核
+        run: |
+          echo "手动配置内核..."
+          cd "$CONFIG/common"
+          
+          # 创建输出目录
+          mkdir -p out
+          
+          # 直接复制defconfig文件
+          if [ -f "arch/arm64/configs/gki_defconfig" ]; then
+            echo "复制 gki_defconfig 到 .config"
+            cp arch/arm64/configs/gki_defconfig out/.config
+          elif [ -f "arch/arm64/configs/vendor/gki_defconfig" ]; then
+            echo "复制 vendor/gki_defconfig 到 .config"
+            cp arch/arm64/configs/vendor/gki_defconfig out/.config
+          else
+            echo "错误：找不到defconfig文件"
+            exit 1
+          fi
+          
+          # 显示配置信息
+          echo "当前配置:"
+          head -20 out/.config
+
       - name: Build with retry
         uses: nick-fields/retry@v3
         with:
@@ -279,25 +291,14 @@ jobs:
             
             echo "Building the kernel..."
             
-            # 配置内核
-            echo "Configuring kernel..."
-            make O=out ARCH=arm64 CC="clang" gki_defconfig || \
-            make O=out ARCH=arm64 CC="clang" vendor/gki_defconfig || \
-            make O=out ARCH=arm64 CC="clang" defconfig
-            
-            # 如果上面失败，尝试直接复制配置文件
-            if [ ! -f "out/.config" ]; then
-              echo "Using fallback config method..."
-              if [ -f "arch/arm64/configs/gki_defconfig" ]; then
-                cp arch/arm64/configs/gki_defconfig out/.config
-              elif [ -f "arch/arm64/configs/vendor/gki_defconfig" ]; then
-                cp arch/arm64/configs/vendor/gki_defconfig out/.config
-              fi
-            fi
+            # 设置完整的交叉编译环境
+            export ARCH=arm64
+            export SUBARCH=arm64
+            export CLANG_TRIPLE=aarch64-linux-gnu-
             
             # 构建内核
             echo "Starting kernel build..."
-            make O=out ARCH=arm64 CC="clang" -j$(nproc) || exit 1
+            make O=out ARCH=arm64 CC="clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" OBJCOPY="llvm-objcopy" OBJDUMP="llvm-objdump" STRIP="llvm-strip" CROSS_COMPILE="aarch64-linux-gnu-" -j$(nproc) || exit 1
 
       - name: 创建Bootimgs文件夹并复制镜像
         run: |
@@ -307,13 +308,21 @@ jobs:
           if [ -f "./$CONFIG/common/out/arch/arm64/boot/Image" ]; then
             cp ./$CONFIG/common/out/arch/arm64/boot/Image ./bootimgs
             cp ./$CONFIG/common/out/arch/arm64/boot/Image ./
+            echo "成功复制内核镜像"
           elif [ -f "./$CONFIG/common/arch/arm64/boot/Image" ]; then
             cp ./$CONFIG/common/arch/arm64/boot/Image ./bootimgs
             cp ./$CONFIG/common/arch/arm64/boot/Image ./
+            echo "成功复制内核镜像"
+          else
+            echo "错误：找不到内核镜像文件"
+            ls -la ./$CONFIG/common/out/arch/arm64/boot/ || echo "out目录不存在"
+            ls -la ./$CONFIG/common/arch/arm64/boot/ || echo "arch目录不存在"
+            exit 1
           fi
 
           if [ -f "./Image" ]; then
             gzip -n -k -f -9 ./Image > ./Image.gz
+            echo "成功创建压缩镜像"
           fi
 
       - name: 创建AnyKernel3 ZIP文件
@@ -326,6 +335,10 @@ jobs:
           if [ -f "../Image" ]; then
             mv ../Image ./Image
             zip -r "../$ZIP_NAME" ./*
+            echo "成功创建 ZIP 文件"
+          else
+            echo "错误：找不到 Image 文件"
+            exit 1
           fi
 
       - name: 添加 KernelSU Manager
