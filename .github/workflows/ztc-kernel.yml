@@ -139,20 +139,6 @@ jobs:
 
           echo "CONFIG set to: $CONFIG"
 
-- name: 安装编译工具链
-  run: |
-    sudo apt update
-    sudo apt install -y \
-      clang \
-      gcc-aarch64-linux-gnu \
-      g++-aarch64-linux-gnu \
-      llvm \
-      lld
-    
-    # 验证安装
-    clang --version
-    aarch64-linux-gnu-gcc --version
-    
       - name: 克隆内核源代码
         run: |
           echo "Creating folder for configuration: $CONFIG..."
@@ -164,7 +150,7 @@ jobs:
           git clone https://github.com/Pzqqt/android_kernel_xiaomi_marble.git --depth=1 common
           
           # Download and setup toolchain
-          curl -LSs "https://github.com/zzh20188/ZTC-Kenel-Build/releases/download/clang/clang-r563880.tar.gz" -o clang-r563880.tar.gz
+          curl -LSs "https://github.com/zzh20188/ZTC-Kenel-Build/releases/download//clang-r563880.tar.gz" -o clang-r563880.tar.gz
           mkdir -p prebuilts-master/clang/host/linux-x86/clang-r563880
           tar -xzvf clang-r563880.tar.gz -C prebuilts-master/clang/host/linux-x86/clang-r563880
           
