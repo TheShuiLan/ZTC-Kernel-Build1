@@ -146,8 +146,8 @@ jobs:
           cd "$CONFIG"
           
           # Clone the specified kernel repository instead of using repo
-          echo "Cloning kernel source from: https://github.com/Pzqqt/android_kernel_xiaomi_marble.git"
-          git clone https://github.com/Pzqqt/android_kernel_xiaomi_marble.git --depth=1 common
+          echo "Cloning kernel source from: https://github.com/Guxin12/android_kernel_xiaomi_marble.git"
+          git clone https://github.com/Guxin12/android_kernel_xiaomi_marble.git --depth=1 common
           
           # Download and setup clang toolchain
           curl -LSs "https://github.com/zzh20188/ZTC-Kenel-Build/releases/download/clang/clang-r563880.tar.gz" -o clang-r563880.tar.gz
