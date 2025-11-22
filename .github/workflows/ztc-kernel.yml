@@ -80,10 +80,14 @@ jobs:
           remove-swapfile: 'true'
           verbose: 'true'
 
-      - name: 安装依赖
+      - name: 安装依赖和交叉编译工具链
         run: |
           sudo apt update && sudo apt upgrade -y
           sudo apt install -y ccache python3 git curl build-essential libssl-dev bison flex libelf-dev dwarves
+          sudo apt install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          # 验证安装
+          aarch64-linux-gnu-gcc --version
+          aarch64-linux-gnu-ld --version
 
       - name: 配置 ccache
         run: |
@@ -359,12 +363,20 @@ jobs:
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
+          export PATH=$PATH:/usr/bin
+          
+          # 验证交叉编译器
+          echo "验证交叉编译器..."
+          aarch64-linux-gnu-gcc --version
+          which aarch64-linux-gnu-ld
           
           # 使用 defconfig
+          echo "配置内核..."
           make vendor/marble_defconfig
           
           # 编译内核
-          make -j$(nproc) CC="/usr/bin/ccache clang"
+          echo "编译内核..."
+          make -j$(nproc) CC="/usr/bin/ccache aarch64-linux-gnu-gcc"
 
       - name: 创建 AnyKernel3 包
         run: |
